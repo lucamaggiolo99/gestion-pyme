@@ -30,11 +30,9 @@ const FinancialDashboard = ({ facturas, movimientos, onDeleteMovimiento }) => {
         }
       }
 
-      // LÓGICA DE INVERSIONES (Suma iniciales, ingresos y rendimientos)
       if (['inversion_ingreso', 'saldo_inicial_inversion', 'interes_inversion'].includes(mov.tipo_movimiento)) inversiones += monto;
       if (mov.tipo_movimiento === 'inversion_rescate') inversiones -= monto;
 
-      // LÓGICA DE CAJA OPERATIVA (Aislada de los rendimientos de inversión)
       if (!['inversion_ingreso', 'inversion_rescate', 'saldo_inicial_inversion', 'interes_inversion'].includes(mov.tipo_movimiento)) {
         if (!esFuturo) {
            if (esIngreso) cajaHoy += monto; 
@@ -44,7 +42,6 @@ const FinancialDashboard = ({ facturas, movimientos, onDeleteMovimiento }) => {
            if (esEgreso) aPagarFuturo += monto;
         }
       } else if (!esFuturo) {
-        // Movimientos entre Caja e Inversión (Impactan hoy en caja)
         if (mov.tipo_movimiento === 'inversion_ingreso') cajaHoy -= monto;
         if (mov.tipo_movimiento === 'inversion_rescate') cajaHoy += monto;
       }
@@ -53,7 +50,6 @@ const FinancialDashboard = ({ facturas, movimientos, onDeleteMovimiento }) => {
   }, [movimientos, facturas]);
 
   const flujoEvolutivo = useMemo(() => {
-    // Filtramos los movimientos que son puros de inversión para no ensuciar el Libro Mayor de Caja
     const movsCaja = movimientos.filter(m => !['saldo_inicial_inversion', 'interes_inversion'].includes(m.tipo_movimiento));
     const movsOrdenados = [...movsCaja].sort((a, b) => a.fecha_efectiva.localeCompare(b.fecha_efectiva));
     
@@ -61,7 +57,7 @@ const FinancialDashboard = ({ facturas, movimientos, onDeleteMovimiento }) => {
     return movsOrdenados.map(mov => {
       let monto = Number(mov.importe);
       let esIngreso = false;
-      let descripcion = mov.nota || mov.tipo_movimiento.replace('_', ' ').toUpperCase();
+      let descripcion = mov.nota || mov.tipo_movimiento.replace(/_/g, ' ').toUpperCase();
 
       if (['saldo_inicial', 'inversion_rescate'].includes(mov.tipo_movimiento)) esIngreso = true;
       else if (['inversion_ingreso', 'pago_impuesto', 'pago_servicio', 'gasto_vario'].includes(mov.tipo_movimiento)) esIngreso = false;
@@ -231,7 +227,7 @@ const FinancialDashboard = ({ facturas, movimientos, onDeleteMovimiento }) => {
   );
 };
 
-// --- COMPONENTE 3: RESULTADOS E IMPUESTOS (ANUALIZADO CON DESGLOSE MENSUAL) ---
+// --- COMPONENTE 3: RESULTADOS E IMPUESTOS ---
 const ResultsDashboard = ({ facturas, movimientos, configImpuestos, setConfigImpuestos }) => {
   const [añoExpandido, setAñoExpandido] = useState(null);
 
@@ -248,7 +244,6 @@ const ResultsDashboard = ({ facturas, movimientos, configImpuestos, setConfigImp
       };
     };
     
-    // 1. ECONÓMICO
     facturas.forEach(f => {
       const mes = f.fecha_comprobante.substring(0, 7);
       const año = mes.substring(0, 4);
@@ -270,7 +265,6 @@ const ResultsDashboard = ({ facturas, movimientos, configImpuestos, setConfigImp
       }
     });
 
-    // 2. FINANCIERO & FISCAL
     movimientos.forEach(mov => {
       const monto = Number(mov.importe);
       
@@ -517,6 +511,10 @@ const InvoiceManager = ({ session }) => {
                 <h3 className="font-bold text-gray-800 mb-4">＋ Nueva Factura</h3>
                 <div className="space-y-3">
                   <div className="flex bg-gray-100 p-1 rounded">{['Venta', 'Compra'].map(t => (<button key={t} onClick={() => setFormData({...formData, tipo: t})} className={`flex-1 py-1 text-sm font-bold rounded transition ${formData.tipo === t ? 'bg-white shadow text-blue-600' : 'text-gray-500'}`}>{t}</button>))}</div>
+                  
+                  {/* AQUÍ ESTÁ EL CAMPO DE FECHA AGREGADO */}
+                  <div><label className="text-xs text-gray-500">Fecha del Comprobante</label><input type="date" className="w-full p-2 border rounded text-sm" value={formData.fecha} onChange={e => setFormData({...formData, fecha: e.target.value})} /></div>
+
                   <div className="grid grid-cols-2 gap-2"><div className="col-span-2"><label className="text-xs text-gray-500">Razón Social</label><input list="entidades" className="w-full p-2 border rounded text-sm" placeholder="Nombre..." value={formData.entidad} onChange={e => { const val = e.target.value; const found = entidadesFrecuentes.find(ent => ent.razon_social === val); setFormData({...formData, entidad: val, cuitEntidad: found ? found.cuit : formData.cuitEntidad}); }} /><datalist id="entidades">{entidadesFrecuentes.filter(e => e.tipo === (formData.tipo === 'Venta' ? 'Cliente' : 'Proveedor')).map(e => (<option key={e.id} value={e.razon_social}>{e.cuit}</option>))}</datalist></div><div className="col-span-2"><label className="text-xs text-gray-500">CUIT (Opcional)</label><input type="text" className="w-full p-2 border rounded text-sm bg-gray-50" placeholder="Ej: 30123456789" value={formData.cuitEntidad} onChange={e => setFormData({...formData, cuitEntidad: e.target.value})} /></div></div>
                   <div className="grid grid-cols-2 gap-2"><div><label className="text-xs text-gray-500">Neto ($)</label><input type="number" className="w-full p-2 border rounded text-sm" value={formData.neto} onChange={e => setFormData({...formData, neto: e.target.value})} /></div><div><label className="text-xs text-gray-500">IVA (%)</label><select className="w-full p-2 border rounded text-sm" value={formData.alicuotaIva} onChange={e => setFormData({...formData, alicuotaIva: e.target.value})}><option value="21">21%</option><option value="10.5">10.5%</option><option value="0">0%</option></select></div></div>
                   <div className="grid grid-cols-3 gap-2"><div className="col-span-1"><label className="text-xs text-gray-500">Pto Vta</label><input className="w-full p-2 border rounded" value={formData.puntoVenta} onChange={e=>setFormData({...formData, puntoVenta:e.target.value})} /></div><div className="col-span-2"><label className="text-xs text-gray-500">Nro Comp</label><input className="w-full p-2 border rounded" value={formData.numero} onChange={e=>setFormData({...formData, numero:e.target.value})} /></div></div>
