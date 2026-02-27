@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { createClient } from '@supabase/supabase-js';
 import { Analytics } from '@vercel/analytics/react'; // <-- AGREGADO VERCEL ANALYTICS
+import { SpeedInsights } from '@vercel/speed-insights/react'; // <-- AGREGADO VERCEL SPEED INSIGHTS
 
 // --- CONFIGURACIÓN SUPABASE ---
 const supabaseUrl = 'https://zvypvqyawwkghqnmiazq.supabase.co';
@@ -596,6 +597,7 @@ const App = () => {
         </div>
       </div>
       <Analytics />
+      <SpeedInsights />
     </>
   ); 
 
@@ -609,6 +611,7 @@ const App = () => {
         <InvoiceManager session={session} />
       </div>
       <Analytics />
+      <SpeedInsights />
     </>
   ); 
 };
