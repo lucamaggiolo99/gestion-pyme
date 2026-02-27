@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { createClient } from '@supabase/supabase-js';
+import { Analytics } from '@vercel/analytics/react'; // <-- AGREGADO VERCEL ANALYTICS
 
 // --- CONFIGURACIÓN SUPABASE ---
 const supabaseUrl = 'https://zvypvqyawwkghqnmiazq.supabase.co';
@@ -512,7 +513,6 @@ const InvoiceManager = ({ session }) => {
                 <div className="space-y-3">
                   <div className="flex bg-gray-100 p-1 rounded">{['Venta', 'Compra'].map(t => (<button key={t} onClick={() => setFormData({...formData, tipo: t})} className={`flex-1 py-1 text-sm font-bold rounded transition ${formData.tipo === t ? 'bg-white shadow text-blue-600' : 'text-gray-500'}`}>{t}</button>))}</div>
                   
-                  {/* AQUÍ ESTÁ EL CAMPO DE FECHA AGREGADO */}
                   <div><label className="text-xs text-gray-500">Fecha del Comprobante</label><input type="date" className="w-full p-2 border rounded text-sm" value={formData.fecha} onChange={e => setFormData({...formData, fecha: e.target.value})} /></div>
 
                   <div className="grid grid-cols-2 gap-2"><div className="col-span-2"><label className="text-xs text-gray-500">Razón Social</label><input list="entidades" className="w-full p-2 border rounded text-sm" placeholder="Nombre..." value={formData.entidad} onChange={e => { const val = e.target.value; const found = entidadesFrecuentes.find(ent => ent.razon_social === val); setFormData({...formData, entidad: val, cuitEntidad: found ? found.cuit : formData.cuitEntidad}); }} /><datalist id="entidades">{entidadesFrecuentes.filter(e => e.tipo === (formData.tipo === 'Venta' ? 'Cliente' : 'Proveedor')).map(e => (<option key={e.id} value={e.razon_social}>{e.cuit}</option>))}</datalist></div><div className="col-span-2"><label className="text-xs text-gray-500">CUIT (Opcional)</label><input type="text" className="w-full p-2 border rounded text-sm bg-gray-50" placeholder="Ej: 30123456789" value={formData.cuitEntidad} onChange={e => setFormData({...formData, cuitEntidad: e.target.value})} /></div></div>
@@ -563,5 +563,54 @@ const InvoiceManager = ({ session }) => {
   );
 };
 
-const App = () => { const [session, setSession] = useState(null); const [email, setEmail] = useState(''); const [password, setPassword] = useState(''); const [loading, setLoading] = useState(false); useEffect(() => { supabase.auth.getSession().then(({ data: { session } }) => setSession(session)); const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => setSession(session)); return () => subscription.unsubscribe(); }, []); const handleLogin = async (e) => { e.preventDefault(); setLoading(true); const { error } = await supabase.auth.signInWithPassword({ email, password }); if (error) alert(error.message); setLoading(false); }; if (!session) return (<div className="min-h-screen flex items-center justify-center bg-gray-100 p-4"><div className="max-w-md w-full bg-white rounded-xl shadow-xl p-8"><h1 className="text-3xl font-bold text-center text-blue-900 mb-6">Gestión PyME</h1><form className="space-y-4"><input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="w-full p-3 border rounded-lg" placeholder="Email" /><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full p-3 border rounded-lg" placeholder="Contraseña" /><button onClick={handleLogin} disabled={loading} className="w-full bg-blue-600 text-white p-3 rounded-lg font-bold">{loading ? '...' : 'Entrar'}</button></form></div></div>); return (<div className="min-h-screen bg-gray-50 font-sans p-6"><div className="flex justify-between items-center mb-6"><h1 className="text-2xl font-bold text-blue-900">Sistema PyME</h1><button onClick={() => supabase.auth.signOut()} className="text-red-500 font-bold text-sm">Salir</button></div><InvoiceManager session={session} /></div>); };
+const App = () => { 
+  const [session, setSession] = useState(null); 
+  const [email, setEmail] = useState(''); 
+  const [password, setPassword] = useState(''); 
+  const [loading, setLoading] = useState(false); 
+
+  useEffect(() => { 
+    supabase.auth.getSession().then(({ data: { session } }) => setSession(session)); 
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => setSession(session)); 
+    return () => subscription.unsubscribe(); 
+  }, []); 
+
+  const handleLogin = async (e) => { 
+    e.preventDefault(); 
+    setLoading(true); 
+    const { error } = await supabase.auth.signInWithPassword({ email, password }); 
+    if (error) alert(error.message); 
+    setLoading(false); 
+  }; 
+
+  if (!session) return (
+    <>
+      <div className="min-h-screen flex items-center justify-center bg-gray-100 p-4">
+        <div className="max-w-md w-full bg-white rounded-xl shadow-xl p-8">
+          <h1 className="text-3xl font-bold text-center text-blue-900 mb-6">Gestión PyME</h1>
+          <form className="space-y-4">
+            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="w-full p-3 border rounded-lg" placeholder="Email" />
+            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full p-3 border rounded-lg" placeholder="Contraseña" />
+            <button onClick={handleLogin} disabled={loading} className="w-full bg-blue-600 text-white p-3 rounded-lg font-bold">{loading ? '...' : 'Entrar'}</button>
+          </form>
+        </div>
+      </div>
+      <Analytics />
+    </>
+  ); 
+
+  return (
+    <>
+      <div className="min-h-screen bg-gray-50 font-sans p-6">
+        <div className="flex justify-between items-center mb-6">
+          <h1 className="text-2xl font-bold text-blue-900">Sistema PyME</h1>
+          <button onClick={() => supabase.auth.signOut()} className="text-red-500 font-bold text-sm">Salir</button>
+        </div>
+        <InvoiceManager session={session} />
+      </div>
+      <Analytics />
+    </>
+  ); 
+};
+
 export default App;
