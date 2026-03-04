@@ -33,27 +33,34 @@ const escalaGanancias2025Inicial = [
 // --- FUNCIÓN DE CÁLCULO PROGRESIVO DE GANANCIAS ---
 const calcularGananciaProgresiva = (baseNeta, tabla) => {
   if (baseNeta <= 0) return { impuestoDeterminado: 0, tramoAplicado: null, fijo: 0, variable: 0, excedente: 0, tasaVariablePercent: 0 };
-
   const tramo = tabla.find(t => baseNeta > t.limiteInferior && baseNeta <= t.limiteSuperior) || tabla[tabla.length - 1];
-
   const componenteFijo = tramo.fijoPagar;
   const componenteVariable = (baseNeta - tramo.sobreExcedente) * tramo.alicuotaVariable;
-
   return {
-    impuestoDeterminado: componenteFijo + componenteVariable,
-    tramoAplicado: tramo,
-    fijo: componenteFijo,
-    variable: componenteVariable,
-    excedente: baseNeta - tramo.sobreExcedente,
-    tasaVariablePercent: tramo.alicuotaVariable * 100
+    impuestoDeterminado: componenteFijo + componenteVariable, tramoAplicado: tramo,
+    fijo: componenteFijo, variable: componenteVariable, excedente: baseNeta - tramo.sobreExcedente, tasaVariablePercent: tramo.alicuotaVariable * 100
   };
 };
 
-// --- COMPONENTE 2: CASH FLOW Y DEUDAS (FINANCIERO) ---
+// --- COMPONENTE 2: CASH FLOW, DEUDAS Y CALENDARIO ---
 const FinancialDashboard = ({ facturas, movimientos, onDeleteMovimiento, onEditMovimiento }) => {
   const [detalleDeuda, setDetalleDeuda] = useState(null); 
+  const [detalleDiaCalendario, setDetalleDiaCalendario] = useState(null); // NUEVO ESTADO PARA CALENDARIO
   const [filtroCashFlow, setFiltroCashFlow] = useState('');
   const [filtroManuales, setFiltroManuales] = useState('');
+  const [mesCalendario, setMesCalendario] = useState(new Date());
+
+  // TECLA ESC PARA CERRAR DETALLES
+  useEffect(() => {
+    const handleEsc = (e) => { 
+      if (e.key === 'Escape') {
+        setDetalleDeuda(null); 
+        setDetalleDiaCalendario(null);
+      }
+    };
+    window.addEventListener('keydown', handleEsc);
+    return () => window.removeEventListener('keydown', handleEsc);
+  }, []);
 
   const posicion = useMemo(() => {
     const hoy = new Date().toISOString().split('T')[0];
@@ -66,7 +73,7 @@ const FinancialDashboard = ({ facturas, movimientos, onDeleteMovimiento, onEditM
       let esEgreso = false;
 
       if (['saldo_inicial', 'inversion_rescate', 'saldo_inicial_inversion', 'interes_inversion'].includes(mov.tipo_movimiento)) esIngreso = true;
-      else if (['inversion_ingreso', 'pago_impuesto', 'pago_servicio', 'gasto_vario'].includes(mov.tipo_movimiento)) esEgreso = true;
+      else if (['inversion_ingreso', 'pago_impuesto', 'pago_servicio', 'gasto_vario', 'pago_autonomos', 'retencion_sircreb', 'vencimiento_tarjeta', 'retencion_ley_25413'].includes(mov.tipo_movimiento)) esEgreso = true;
       else if (mov.tipo_movimiento === 'factura') {
         const f = facturas.find(x => x.id === mov.factura_id);
         if (f) {
@@ -105,7 +112,7 @@ const FinancialDashboard = ({ facturas, movimientos, onDeleteMovimiento, onEditM
       let descripcion = mov.nota || mov.tipo_movimiento.replace(/_/g, ' ').toUpperCase();
 
       if (['saldo_inicial', 'inversion_rescate'].includes(mov.tipo_movimiento)) esIngreso = true;
-      else if (['inversion_ingreso', 'pago_impuesto', 'pago_servicio', 'gasto_vario'].includes(mov.tipo_movimiento)) esIngreso = false;
+      else if (['inversion_ingreso', 'pago_impuesto', 'pago_servicio', 'gasto_vario', 'pago_autonomos', 'retencion_sircreb', 'vencimiento_tarjeta', 'retencion_ley_25413'].includes(mov.tipo_movimiento)) esIngreso = false;
       else if (mov.tipo_movimiento === 'factura') {
         const f = facturas.find(x => x.id === mov.factura_id);
         if (f) {
@@ -156,6 +163,61 @@ const FinancialDashboard = ({ facturas, movimientos, onDeleteMovimiento, onEditM
     m.importe.toString().includes(filtroManuales)
   );
 
+  // LOGICA DEL CALENDARIO
+  const renderCalendario = () => {
+    const year = mesCalendario.getFullYear();
+    const month = mesCalendario.getMonth();
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    const firstDay = new Date(year, month, 1).getDay(); // 0 = Dom, 1 = Lun
+    
+    let startOffset = firstDay - 1;
+    if (startOffset < 0) startOffset = 6; 
+
+    const diasNulos = Array.from({ length: startOffset }, (_, i) => <div key={`blank-${i}`} className="p-2 border border-transparent"></div>);
+    const nombreMes = mesCalendario.toLocaleDateString('es-AR', { month: 'long', year: 'numeric' });
+
+    const dias = Array.from({ length: daysInMonth }, (_, i) => {
+       const day = i + 1;
+       const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+       const esHoy = dateStr === new Date().toISOString().split('T')[0];
+
+       // Sumar ingresos y egresos de este día particular
+       const flowsDia = flujoEvolutivo.filter(f => f.fecha === dateStr);
+       const sumIn = flowsDia.reduce((acc, curr) => acc + curr.ingreso, 0);
+       const sumOut = flowsDia.reduce((acc, curr) => acc + curr.egreso, 0);
+
+       return (
+         <div key={day} onClick={() => setDetalleDiaCalendario({ fecha: dateStr, flows: flowsDia, sumIn, sumOut })} className={`p-2 border rounded-lg flex flex-col items-start justify-start min-h-[5rem] cursor-pointer hover:bg-gray-50 ${esHoy ? 'bg-blue-50 border-blue-300 ring-1 ring-blue-300' : 'bg-white border-gray-200'} shadow-sm transition hover:shadow-md`}>
+            <span className={`font-bold text-xs mb-1 ${esHoy ? 'text-blue-800' : 'text-gray-500'}`}>{day}</span>
+            <div className="flex flex-col gap-1 w-full text-[10px] font-bold">
+               {sumIn > 0 && <span className="text-green-700 bg-green-100 px-1 py-0.5 rounded truncate" title={`Ingreso: $${formatCurrency(sumIn)}`}>+ ${formatCurrency(sumIn)}</span>}
+               {sumOut > 0 && <span className="text-red-700 bg-red-100 px-1 py-0.5 rounded truncate" title={`Egreso: $${formatCurrency(sumOut)}`}>- ${formatCurrency(sumOut)}</span>}
+            </div>
+         </div>
+       );
+    });
+
+    return (
+      <div className="bg-white p-6 rounded-xl shadow border border-gray-200">
+         <div className="flex justify-between items-center mb-4 border-b pb-3">
+            <h3 className="font-bold text-gray-800 flex items-center gap-2">📅 Calendario Financiero</h3>
+            <div className="flex items-center gap-4 bg-gray-100 rounded-lg p-1">
+               <button onClick={() => setMesCalendario(new Date(year, month - 1, 1))} className="px-3 py-1 hover:bg-white rounded shadow-sm text-gray-600 font-bold">←</button>
+               <span className="font-bold text-sm text-gray-800 capitalize w-32 text-center">{nombreMes}</span>
+               <button onClick={() => setMesCalendario(new Date(year, month + 1, 1))} className="px-3 py-1 hover:bg-white rounded shadow-sm text-gray-600 font-bold">→</button>
+            </div>
+         </div>
+         <div className="grid grid-cols-7 gap-2 text-center mb-2 text-xs font-bold text-gray-400 uppercase">
+            <span>Lun</span><span>Mar</span><span>Mié</span><span>Jue</span><span>Vie</span><span>Sáb</span><span>Dom</span>
+         </div>
+         <div className="grid grid-cols-7 gap-2">
+            {diasNulos}
+            {dias}
+         </div>
+      </div>
+    );
+  };
+
   return (
     <div className="space-y-8 animate-fade-in pb-10">
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -176,6 +238,9 @@ const FinancialDashboard = ({ facturas, movimientos, onDeleteMovimiento, onEditM
           <p className="text-xl font-bold text-red-600">- {formatCurrencyConSigno(posicion.aPagarFuturo)}</p>
         </div>
       </div>
+
+      {/* RENDERIZADO DEL NUEVO CALENDARIO */}
+      {renderCalendario()}
 
       <div className="bg-white p-6 rounded-xl shadow border border-gray-200">
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 gap-3">
@@ -264,6 +329,7 @@ const FinancialDashboard = ({ facturas, movimientos, onDeleteMovimiento, onEditM
         </div>
       </div>
 
+      {/* MODAL DETALLE DE DEUDA */}
       {detalleDeuda && (
         <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-3xl overflow-hidden animate-fade-in-up">
@@ -296,20 +362,72 @@ const FinancialDashboard = ({ facturas, movimientos, onDeleteMovimiento, onEditM
               </table>
             </div>
             <div className="p-4 border-t bg-gray-50 flex justify-end">
-              <button onClick={() => setDetalleDeuda(null)} className="px-6 py-2 bg-white border border-gray-300 rounded font-bold text-gray-600 hover:bg-gray-100">Cerrar</button>
+              <button onClick={() => setDetalleDeuda(null)} className="px-6 py-2 bg-white border border-gray-300 rounded font-bold text-gray-600 hover:bg-gray-100">Cerrar (ESC)</button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* NUEVO MODAL: DETALLE DEL DÍA DEL CALENDARIO */}
+      {detalleDiaCalendario && (
+        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4">
+           <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden animate-fade-in-up">
+               <div className="p-6 border-b bg-gray-50 flex justify-between items-start">
+                   <div>
+                      <h3 className="text-xl font-bold text-gray-800 flex items-center gap-2">📅 Detalle del Día</h3>
+                      <p className="text-sm text-gray-500 capitalize">{new Date(detalleDiaCalendario.fecha + 'T00:00:00').toLocaleDateString('es-AR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</p>
+                   </div>
+                   <div className="text-right">
+                      {detalleDiaCalendario.sumIn > 0 && <p className="text-sm font-bold text-green-600">+ {formatCurrencyConSigno(detalleDiaCalendario.sumIn)}</p>}
+                      {detalleDiaCalendario.sumOut > 0 && <p className="text-sm font-bold text-red-600">- {formatCurrencyConSigno(detalleDiaCalendario.sumOut)}</p>}
+                   </div>
+               </div>
+               <div className="p-6 overflow-y-auto max-h-[50vh]">
+                   {detalleDiaCalendario.flows.length === 0 ? (
+                      <p className="text-center text-gray-400 py-4">No hay movimientos registrados para esta fecha.</p>
+                   ) : (
+                      <div className="space-y-3">
+                         {detalleDiaCalendario.flows.map(fl => (
+                            <div key={fl.id} className="flex justify-between items-center border-b border-gray-100 pb-2">
+                               <span className="text-sm text-gray-700 font-medium">{fl.descripcion}</span>
+                               <span className={`text-sm font-bold ${fl.ingreso > 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                  {fl.ingreso > 0 ? `+ ${formatCurrencyConSigno(fl.ingreso)}` : `- ${formatCurrencyConSigno(fl.egreso)}`}
+                               </span>
+                            </div>
+                         ))}
+                      </div>
+                   )}
+               </div>
+               <div className="p-4 border-t bg-gray-50 flex justify-end">
+                  <button onClick={() => setDetalleDiaCalendario(null)} className="px-6 py-2 bg-white border border-gray-300 rounded font-bold text-gray-600 hover:bg-gray-100 transition shadow-sm">Cerrar (ESC)</button>
+               </div>
+           </div>
         </div>
       )}
     </div>
   );
 };
 
-// --- COMPONENTE 3: RESULTADOS E IMPUESTOS (CON AUDITORÍA PROFUNDA) ---
+// --- COMPONENTE 3: RESULTADOS E IMPUESTOS (CON SIRCREB Y AUTÓNOMOS) ---
 const ResultsDashboard = ({ facturas, movimientos, configImpuestos, setConfigImpuestos }) => {
   const [añoExpandido, setAñoExpandido] = useState(null);
   const [detalleModal, setDetalleModal] = useState(null); 
   const [subDetalle, setSubDetalle] = useState(null); 
+
+  // ESC KEY PARA CERRAR AUDITORÍA
+  useEffect(() => {
+    const handleEsc = (e) => {
+      if (e.key === 'Escape') {
+        setSubDetalle(prev => {
+          if (prev) return null; // Cierra primero el subdetalle
+          setDetalleModal(null); // Si no hay subdetalle, cierra el modal completo
+          return prev;
+        });
+      }
+    };
+    window.addEventListener('keydown', handleEsc);
+    return () => window.removeEventListener('keydown', handleEsc);
+  }, []);
 
   const deduccionesTotal = (configImpuestos.mni || 0) + (configImpuestos.cargasFamilia || 0) + (configImpuestos.deduccionEspecial || 0);
 
@@ -318,13 +436,13 @@ const ResultsDashboard = ({ facturas, movimientos, configImpuestos, setConfigImp
 
     const asegurarEstructura = (año, mes) => {
       if (!años[año]) años[año] = { 
-        totales: { ventas:0, compras:0, cobros:0, pagos:0, ivaDeb:0, ivaCred:0, baseIIBB:0, retIva:0, retIIBB:0, retGan:0, 
-                   ventasItems: [], comprasItems: [], cobrosItems: [], pagosItems: [], retIvaItems: [], retIIBBItems: [], retGanItems: [] }, 
+        totales: { ventas:0, compras:0, cobros:0, pagos:0, ivaDeb:0, ivaCred:0, baseIIBB:0, retIva:0, retIIBB:0, retGan:0, deduccionesGenerales:0,
+                   ventasItems: [], comprasItems: [], cobrosItems: [], pagosItems: [], retIvaItems: [], retIIBBItems: [], retGanItems: [], deduccionesGenItems: [] }, 
         meses: {} 
       };
       if (!años[año].meses[mes]) años[año].meses[mes] = { 
-        ventas:0, compras:0, cobros:0, pagos:0, ivaDeb:0, ivaCred:0, baseIIBB:0, retIva:0, retIIBB:0, retGan:0,
-        ventasItems: [], comprasItems: [], cobrosItems: [], pagosItems: [], retIvaItems: [], retIIBBItems: [], retGanItems: []
+        ventas:0, compras:0, cobros:0, pagos:0, ivaDeb:0, ivaCred:0, baseIIBB:0, retIva:0, retIIBB:0, retGan:0, deduccionesGenerales:0,
+        ventasItems: [], comprasItems: [], cobrosItems: [], pagosItems: [], retIvaItems: [], retIIBBItems: [], retGanItems: [], deduccionesGenItems: []
       };
     };
     
@@ -362,7 +480,7 @@ const ResultsDashboard = ({ facturas, movimientos, configImpuestos, setConfigImp
       let descFin = mov.nota || mov.tipo_movimiento.replace(/_/g, ' ').toUpperCase();
       
       if (['saldo_inicial', 'inversion_rescate', 'saldo_inicial_inversion', 'interes_inversion'].includes(mov.tipo_movimiento)) esIngreso = true;
-      else if (['inversion_ingreso', 'pago_impuesto', 'pago_servicio', 'gasto_vario'].includes(mov.tipo_movimiento)) esEgreso = true;
+      else if (['inversion_ingreso', 'pago_impuesto', 'pago_servicio', 'gasto_vario', 'pago_autonomos', 'retencion_sircreb', 'vencimiento_tarjeta', 'retencion_ley_25413'].includes(mov.tipo_movimiento)) esEgreso = true;
       else if (mov.tipo_movimiento === 'factura') {
         const f = facturas.find(x => x.id === mov.factura_id);
         if (f) { 
@@ -376,26 +494,39 @@ const ResultsDashboard = ({ facturas, movimientos, configImpuestos, setConfigImp
       if (esIngreso) { años[añoFin].totales.cobros += monto; años[añoFin].meses[mesFin].cobros += monto; años[añoFin].totales.cobrosItems.push(movAnotado); años[añoFin].meses[mesFin].cobrosItems.push(movAnotado); }
       if (esEgreso) { años[añoFin].totales.pagos += monto; años[añoFin].meses[mesFin].pagos += monto; años[añoFin].totales.pagosItems.push(movAnotado); años[añoFin].meses[mesFin].pagosItems.push(movAnotado); }
 
+      // LOGICA DE IMPUESTOS
       if (mov.fecha_pago) {
         const mesFis = mov.fecha_pago.substring(0, 7);
         const añoFis = mesFis.substring(0, 4);
         asegurarEstructura(añoFis, mesFis);
         
         if (mov.ret_iva > 0) { años[añoFis].totales.retIva += Number(mov.ret_iva); años[añoFis].meses[mesFis].retIva += Number(mov.ret_iva); años[añoFis].totales.retIvaItems.push({...mov, importe_aplicado: mov.ret_iva, descripcion_calculada: descFin}); años[añoFis].meses[mesFis].retIvaItems.push({...mov, importe_aplicado: mov.ret_iva, descripcion_calculada: descFin}); }
-        if (mov.ret_iibb > 0) { años[añoFis].totales.retIIBB += Number(mov.ret_iibb); años[añoFis].meses[mesFis].retIIBB += Number(mov.ret_iibb); años[añoFis].totales.retIIBBItems.push({...mov, importe_aplicado: mov.ret_iibb, descripcion_calculada: descFin}); años[añoFis].meses[mesFis].retIIBBItems.push({...mov, importe_aplicado: mov.ret_iibb, descripcion_calculada: descFin}); }
+        
+        // Sumar Retenciones clásicas de Ganancias y el Impuesto Ley 25.413
         if (mov.ret_ganancias > 0) { años[añoFis].totales.retGan += Number(mov.ret_ganancias); años[añoFis].meses[mesFis].retGan += Number(mov.ret_ganancias); años[añoFis].totales.retGanItems.push({...mov, importe_aplicado: mov.ret_ganancias, descripcion_calculada: descFin}); años[añoFis].meses[mesFis].retGanItems.push({...mov, importe_aplicado: mov.ret_ganancias, descripcion_calculada: descFin}); }
+        if (mov.tipo_movimiento === 'retencion_ley_25413') { años[añoFis].totales.retGan += monto; años[añoFis].meses[mesFis].retGan += monto; años[añoFis].totales.retGanItems.push({...mov, importe_aplicado: monto, descripcion_calculada: 'Ley 25.413: ' + descFin}); años[añoFis].meses[mesFis].retGanItems.push({...mov, importe_aplicado: monto, descripcion_calculada: 'Ley 25.413: ' + descFin}); }
+        
+        // Sumar Retenciones clásicas de IIBB y SIRCREB
+        if (mov.ret_iibb > 0) { años[añoFis].totales.retIIBB += Number(mov.ret_iibb); años[añoFis].meses[mesFis].retIIBB += Number(mov.ret_iibb); años[añoFis].totales.retIIBBItems.push({...mov, importe_aplicado: mov.ret_iibb, descripcion_calculada: descFin}); años[añoFis].meses[mesFis].retIIBBItems.push({...mov, importe_aplicado: mov.ret_iibb, descripcion_calculada: descFin}); }
+        if (mov.tipo_movimiento === 'retencion_sircreb') { años[añoFis].totales.retIIBB += monto; años[añoFis].meses[mesFis].retIIBB += monto; años[añoFis].totales.retIIBBItems.push({...mov, importe_aplicado: monto, descripcion_calculada: 'SIRCREB: ' + descFin}); años[añoFis].meses[mesFis].retIIBBItems.push({...mov, importe_aplicado: monto, descripcion_calculada: 'SIRCREB: ' + descFin}); }
+        
+        // Sumar Autónomos a las Deducciones Generales
+        if (mov.tipo_movimiento === 'pago_autonomos') { años[añoFis].totales.deduccionesGenerales += monto; años[añoFis].meses[mesFis].deduccionesGenerales += monto; años[añoFis].totales.deduccionesGenItems.push({...mov, importe_aplicado: monto, descripcion_calculada: 'Autónomos: ' + descFin}); años[añoFis].meses[mesFis].deduccionesGenItems.push({...mov, importe_aplicado: monto, descripcion_calculada: 'Autónomos: ' + descFin}); }
       }
     });
 
     const resultadoArr = Object.entries(años).sort((a, b) => b[0].localeCompare(a[0])).map(([año, data]) => {
       const resEcoAnual = data.totales.ventas - data.totales.compras;
-      const baseImpGanAnual = Math.max(0, resEcoAnual - deduccionesTotal);
+      const gananciaNetaGeneralAnual = Math.max(0, resEcoAnual - data.totales.deduccionesGenerales);
+      const baseImpGanAnual = Math.max(0, gananciaNetaGeneralAnual - deduccionesTotal);
+      
       const calculoGanAnual = calcularGananciaProgresiva(baseImpGanAnual, configImpuestos.tablaganancias);
       data.totales.calculoProgresivoDetalle = calculoGanAnual;
 
       const mesesOrdenados = Object.entries(data.meses).sort((a, b) => b[0].localeCompare(a[0])).map(([mes, d]) => {
          const resEcoMes = d.ventas - d.compras;
-         const baseImpGanMes = Math.max(0, resEcoMes - deduccionesTotal);
+         const gananciaNetaGeneralMes = Math.max(0, resEcoMes - d.deduccionesGenerales);
+         const baseImpGanMes = Math.max(0, gananciaNetaGeneralMes - deduccionesTotal);
          d.calculoProgresivoDetalle = calcularGananciaProgresiva(baseImpGanMes, configImpuestos.tablaganancias);
          return [mes, d];
       });
@@ -531,6 +662,7 @@ const ResultsDashboard = ({ facturas, movimientos, configImpuestos, setConfigImp
         </div>
       </div>
 
+      {/* RENDERIZADO CONDICIONAL DE MODALES DE DETALLE O EDICIÓN DE TABLA */}
       {detalleModal && detalleModal.tipo === 'ConfigTablaGanancias' ? (
         <ModalEditTablaGanancias 
            tabla={configImpuestos.tablaganancias}
@@ -580,15 +712,18 @@ const ResultsDashboard = ({ facturas, movimientos, configImpuestos, setConfigImp
                       <div className="flex justify-between border-b border-gray-100 pb-2 cursor-pointer hover:bg-blue-50 p-1 rounded transition" onClick={() => setSubDetalle({titulo: 'Ventas (Base Imponible IIBB)', tipo: 'facturas', mostrarIva: false, items: detalleModal.data.ventasItems})}><span className="underline decoration-dotted text-blue-700">Ventas Gravadas (Base Imp.):</span> <span className="font-bold text-gray-800">{formatCurrencyConSigno(detalleModal.data.baseIIBB)}</span></div>
                       <div className="flex justify-between border-b border-gray-100 pb-2"><span>Alícuota Aplicada:</span> <span className="font-bold text-gray-600">{configImpuestos.iibb}%</span></div>
                       <div className="flex justify-between border-b border-gray-200 pb-2 bg-gray-50 p-1 rounded"><span>Impuesto Determinado:</span> <span className="font-bold text-gray-800">{formatCurrencyConSigno((detalleModal.data.baseIIBB * configImpuestos.iibb) / 100)}</span></div>
-                      <div className="flex justify-between border-b border-gray-100 pb-2 mt-2 cursor-pointer hover:bg-orange-50 p-1 rounded transition" onClick={() => setSubDetalle({titulo: 'Retenciones de IIBB', tipo: 'movimientos', items: detalleModal.data.retIIBBItems})}><span className="underline decoration-dotted text-orange-700">Retenciones Sufridas:</span> <span className="font-bold text-orange-600">- {formatCurrencyConSigno(detalleModal.data.retIIBB)}</span></div>
+                      <div className="flex justify-between border-b border-gray-100 pb-2 mt-2 cursor-pointer hover:bg-orange-50 p-1 rounded transition" onClick={() => setSubDetalle({titulo: 'Retenciones de IIBB (Inc. SIRCREB)', tipo: 'movimientos', items: detalleModal.data.retIIBBItems})}><span className="underline decoration-dotted text-orange-700">Retenciones Sufridas:</span> <span className="font-bold text-orange-600">- {formatCurrencyConSigno(detalleModal.data.retIIBB)}</span></div>
                       <div className="flex justify-between pt-2 text-lg"><span>Saldo Final (A pagar / A favor):</span> <span className={`font-bold ${((detalleModal.data.baseIIBB * configImpuestos.iibb) / 100) - detalleModal.data.retIIBB < 0 ? 'text-green-600' : 'text-blue-800'}`}>{formatCurrencyConSigno(((detalleModal.data.baseIIBB * configImpuestos.iibb) / 100) - detalleModal.data.retIIBB)}</span></div>
                     </>
                  )}
 
                  {detalleModal.tipo === 'Ganancias' && (
                     <>
-                      <div className="flex justify-between border-b border-gray-100 pb-2 cursor-pointer hover:bg-gray-100 p-1 rounded transition" onClick={() => setDetalleModal({...detalleModal, tipo: 'ResEconómico'})}><span className="underline decoration-dotted text-blue-700">Res. Económico (Ventas - Compras):</span> <span className="font-bold text-gray-800">{formatCurrencyConSigno(detalleModal.data.ventas - detalleModal.data.compras)}</span></div>
+                      <div className="flex justify-between border-b border-gray-100 pb-2 cursor-pointer hover:bg-gray-100 p-1 rounded transition" onClick={() => setDetalleModal({...detalleModal, tipo: 'ResEconómico'})}><span className="underline decoration-dotted text-blue-700">Res. Económico Bruto:</span> <span className="font-bold text-gray-800">{formatCurrencyConSigno(detalleModal.data.ventas - detalleModal.data.compras)}</span></div>
                       
+                      <div className="flex justify-between border-b border-gray-100 pb-2 cursor-pointer hover:bg-orange-50 p-1 rounded transition mt-1" onClick={() => setSubDetalle({titulo: 'Deducciones Generales (Autónomos)', tipo: 'movimientos', items: detalleModal.data.deduccionesGenItems})}><span className="underline decoration-dotted text-orange-800">Deducciones Generales (Autónomos):</span> <span className="font-bold text-orange-600">- {formatCurrencyConSigno(detalleModal.data.deduccionesGenerales)}</span></div>
+                      <div className="flex justify-between border-b border-gray-200 pb-2 bg-gray-50 p-1 rounded"><span>Ganancia Neta General:</span> <span className="font-bold text-gray-800">{formatCurrencyConSigno(Math.max(0, (detalleModal.data.ventas - detalleModal.data.compras) - detalleModal.data.deduccionesGenerales))}</span></div>
+
                       <div className="bg-green-50 p-3 rounded-lg border border-green-200 space-y-3 my-3 shadow-inner">
                          <p className="font-bold text-xs text-green-800 uppercase border-b border-green-200 pb-1">Deducciones Personales</p>
                          <div className="flex justify-between items-center">
@@ -605,7 +740,7 @@ const ResultsDashboard = ({ facturas, movimientos, configImpuestos, setConfigImp
                          </div>
                       </div>
 
-                      <div className="flex justify-between border-b border-gray-200 pb-2 bg-gray-50 p-1 rounded"><span>Base Imponible Neta:</span> <span className="font-bold text-gray-800">{formatCurrencyConSigno(Math.max(0, (detalleModal.data.ventas - detalleModal.data.compras) - deduccionesTotal))}</span></div>
+                      <div className="flex justify-between border-b border-gray-200 pb-2 bg-gray-50 p-1 rounded"><span>Base Imponible Neta:</span> <span className="font-bold text-gray-800">{formatCurrencyConSigno(Math.max(0, (Math.max(0, (detalleModal.data.ventas - detalleModal.data.compras) - detalleModal.data.deduccionesGenerales)) - deduccionesTotal))}</span></div>
                       
                       <div className="bg-blue-50 p-4 rounded-xl border border-blue-200 space-y-2 my-4 shadow-sm">
                          <p className="font-bold text-xs text-blue-900 uppercase border-b border-blue-200 pb-1 mb-2">Cálculo Progresivo (Art. 94)</p>
@@ -615,7 +750,7 @@ const ResultsDashboard = ({ facturas, movimientos, configImpuestos, setConfigImp
                          <div className="flex justify-between pt-1 text-sm font-medium bg-white p-1 rounded"><span>Imp. Determinado Progresivo (1 + 3):</span> <span className="font-bold text-gray-800">{formatCurrencyConSigno(detalleModal.data.calculoProgresivoDetalle?.impuestoDeterminado)}</span></div>
                       </div>
 
-                      <div className="flex justify-between border-b border-gray-100 pb-2 mt-2 cursor-pointer hover:bg-orange-50 p-1 rounded transition" onClick={() => setSubDetalle({titulo: 'Retenciones de Ganancias', tipo: 'movimientos', items: detalleModal.data.retGanItems})}><span className="underline decoration-dotted text-orange-700">Retenciones Sufridas:</span> <span className="font-bold text-orange-600">- {formatCurrencyConSigno(detalleModal.data.retGan)}</span></div>
+                      <div className="flex justify-between border-b border-gray-100 pb-2 mt-2 cursor-pointer hover:bg-orange-50 p-1 rounded transition" onClick={() => setSubDetalle({titulo: 'Retenciones de Ganancias y Ley 25.413', tipo: 'movimientos', items: detalleModal.data.retGanItems})}><span className="underline decoration-dotted text-orange-700">Retenciones Sufridas (inc. Cheque):</span> <span className="font-bold text-orange-600">- {formatCurrencyConSigno(detalleModal.data.retGan)}</span></div>
                       <div className="flex justify-between pt-2 text-lg"><span>Saldo Final (A pagar / A favor):</span> <span className={`font-bold ${detalleModal.data.calculoProgresivoDetalle?.impuestoDeterminado - detalleModal.data.retGan < 0 ? 'text-green-600' : 'text-green-800'}`}>{formatCurrencyConSigno(detalleModal.data.calculoProgresivoDetalle?.impuestoDeterminado - detalleModal.data.retGan)}</span></div>
                     </>
                  )}
@@ -624,7 +759,7 @@ const ResultsDashboard = ({ facturas, movimientos, configImpuestos, setConfigImp
              
              {!subDetalle && (
                <div className="p-4 border-t bg-gray-50 flex justify-end">
-                  <button onClick={() => setDetalleModal(null)} className="px-6 py-2 bg-white border border-gray-300 rounded font-bold text-gray-600 hover:bg-gray-100 transition shadow-sm">Cerrar</button>
+                  <button onClick={() => setDetalleModal(null)} className="px-6 py-2 bg-white border border-gray-300 rounded font-bold text-gray-600 hover:bg-gray-100 transition shadow-sm">Cerrar (ESC)</button>
                </div>
              )}
           </div>
@@ -638,6 +773,13 @@ const ResultsDashboard = ({ facturas, movimientos, configImpuestos, setConfigImp
 // --- NUEVO COMPONENTE: EDITOR DE TABLA GANANCIAS ---
 const ModalEditTablaGanancias = ({ tabla, onSave, onClose }) => {
   const [tablaLocal, setTablaLocal] = useState([...tabla]);
+
+  // ESC KEY PARA CERRAR EDICION TABLA
+  useEffect(() => {
+    const handleEsc = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', handleEsc);
+    return () => window.removeEventListener('keydown', handleEsc);
+  }, [onClose]);
 
   const handleChangeRaw = (index, field, value) => {
     const nuevaTabla = [...tablaLocal];
@@ -683,7 +825,7 @@ const ModalEditTablaGanancias = ({ tabla, onSave, onClose }) => {
          </div>
          
          <div className="p-4 border-t bg-gray-50 flex justify-end gap-3">
-            <button onClick={onClose} className="px-6 py-2 bg-white border border-gray-300 rounded font-bold text-gray-600 hover:bg-gray-100 transition shadow-sm text-sm">Cerrar sin guardar</button>
+            <button onClick={onClose} className="px-6 py-2 bg-white border border-gray-300 rounded font-bold text-gray-600 hover:bg-gray-100 transition shadow-sm text-sm">Cerrar sin guardar (ESC)</button>
             <button onClick={() => onSave(tablaLocal)} className="px-8 py-2 bg-green-600 text-white rounded font-bold hover:bg-green-700 transition shadow-sm text-sm">Guardar Cambios Anuales</button>
          </div>
       </div>
@@ -717,6 +859,18 @@ const InvoiceManager = ({ session }) => {
   
   const [filtroTipoFactura, setFiltroTipoFactura] = useState('Venta');
   const [filtroTextoFactura, setFiltroTextoFactura] = useState('');
+
+  // ESC KEY PARA CERRAR MODALES PRINCIPALES
+  useEffect(() => {
+    const handleEsc = (e) => {
+      if (e.key === 'Escape') {
+        setModalCobro(null);
+        setModalInversion(false);
+      }
+    };
+    window.addEventListener('keydown', handleEsc);
+    return () => window.removeEventListener('keydown', handleEsc);
+  }, []);
 
   const [formData, setFormData] = useState({ 
     tipo: 'Venta', fecha: new Date().toISOString().split('T')[0], 
@@ -825,21 +979,15 @@ const InvoiceManager = ({ session }) => {
 
   const prepararEdicion = (mov) => { setMovimientoEdicion(mov.id); setFormCobro({ fechaEmision: mov.fecha_pago, fechaEfectiva: mov.fecha_efectiva || mov.fecha_pago, importe: mov.importe, retGanancias: mov.ret_ganancias || 0, retIva: mov.ret_iva || 0, retIibb: mov.ret_iibb || 0, nota: mov.nota || '' }); };
 
-  // --- NUEVA LÓGICA: ACTUALIZAR IMPORTE AUTOMÁTICAMENTE AL CARGAR RETENCIONES ---
   const handleRetencionChange = (tipoRet, valor) => {
     const nuevoForm = { ...formCobro, [tipoRet]: valor };
-    
-    // Solo auto-calculamos si estamos ingresando un PAGO NUEVO (no editando uno viejo)
     if (!movimientoEdicion) {
       const rGan = Number(tipoRet === 'retGanancias' ? valor : nuevoForm.retGanancias) || 0;
       const rIva = Number(tipoRet === 'retIva' ? valor : nuevoForm.retIva) || 0;
       const rIibb = Number(tipoRet === 'retIibb' ? valor : nuevoForm.retIibb) || 0;
-      
       const totalRet = rGan + rIva + rIibb;
-      // El importe a cobrar se actualiza restando las retenciones al saldo pendiente
       nuevoForm.importe = Math.max(0, modalCobro.saldo - totalRet);
     }
-    
     setFormCobro(nuevoForm);
   };
 
@@ -859,10 +1007,10 @@ const InvoiceManager = ({ session }) => {
 
       {empresaSeleccionada && !modoNuevaEmpresa && (
         <>
-          <div className="flex border-b border-gray-200 mb-6 bg-white rounded-t-xl px-2">
-            <button onClick={() => setActiveTab('gestion')} className={`px-6 py-4 font-bold text-sm transition ${activeTab === 'gestion' ? 'border-b-4 border-blue-600 text-blue-600' : 'text-gray-500'}`}>📂 Gestión Diaria</button>
-            <button onClick={() => setActiveTab('finanzas')} className={`px-6 py-4 font-bold text-sm transition ${activeTab === 'finanzas' ? 'border-b-4 border-purple-600 text-purple-600' : 'text-gray-500'}`}>💸 Cash Flow y Deudas</button>
-            <button onClick={() => setActiveTab('resultados')} className={`px-6 py-4 font-bold text-sm transition ${activeTab === 'resultados' ? 'border-b-4 border-green-600 text-green-600' : 'text-gray-500'}`}>📊 Resultados e Impuestos</button>
+          <div className="flex border-b border-gray-200 mb-6 bg-white rounded-t-xl px-2 overflow-x-auto">
+            <button onClick={() => setActiveTab('gestion')} className={`px-6 py-4 font-bold text-sm transition whitespace-nowrap ${activeTab === 'gestion' ? 'border-b-4 border-blue-600 text-blue-600' : 'text-gray-500'}`}>📂 Gestión Diaria</button>
+            <button onClick={() => setActiveTab('finanzas')} className={`px-6 py-4 font-bold text-sm transition whitespace-nowrap ${activeTab === 'finanzas' ? 'border-b-4 border-purple-600 text-purple-600' : 'text-gray-500'}`}>💸 Cash Flow, Deudas y Calendario</button>
+            <button onClick={() => setActiveTab('resultados')} className={`px-6 py-4 font-bold text-sm transition whitespace-nowrap ${activeTab === 'resultados' ? 'border-b-4 border-green-600 text-green-600' : 'text-gray-500'}`}>📊 Resultados e Impuestos</button>
           </div>
 
           {activeTab === 'gestion' && (
@@ -937,12 +1085,17 @@ const InvoiceManager = ({ session }) => {
       )}
 
       {/* MODALES REUTILIZADOS */}
-      {modalInversion && (<div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50"><div className="bg-white p-6 rounded-xl shadow-2xl w-96"><h3 className="text-lg font-bold mb-4">{formInversion.id ? '✏️ Editar Movimiento' : '⚡ Nuevo Movimiento'}</h3><div className="space-y-3"><div><label className="text-xs font-bold text-gray-500">Tipo</label><select className="w-full p-2 border rounded" value={formInversion.tipo} onChange={e => setFormInversion({...formInversion, tipo: e.target.value})}><option value="saldo_inicial">💰 Carga de Saldo Inicial (Caja)</option><option value="saldo_inicial_inversion">🏦 Carga de Saldo Inicial (Inversión)</option><option value="inversion_ingreso">📈 Enviar a Inversión (Salida de Caja)</option><option value="interes_inversion">✨ Intereses Ganados (Suma a Inversión)</option><option value="inversion_rescate">📥 Rescate Inversión (Entrada a Caja)</option><option value="pago_impuesto">💸 Pago Impuestos</option><option value="pago_servicio">💡 Pago Servicios</option><option value="gasto_vario">🛒 Gastos Varios</option></select></div><div><label className="text-xs text-gray-500">Fecha</label><input type="date" className="w-full p-2 border rounded" value={formInversion.fecha} onChange={e => setFormInversion({...formInversion, fecha: e.target.value})} /></div><div><label className="text-xs text-gray-500">Importe</label><input type="number" className="w-full p-2 border rounded font-bold" value={formInversion.importe} onChange={e => setFormInversion({...formInversion, importe: e.target.value})} /></div><div><label className="text-xs text-gray-500">Descripción</label><input className="w-full p-2 border rounded" value={formInversion.descripcion} onChange={e => setFormInversion({...formInversion, descripcion: e.target.value})} /></div><button onClick={guardarMovimientoManual} className="w-full bg-purple-600 text-white py-2 rounded font-bold">{formInversion.id ? 'Guardar Cambios' : 'Registrar'}</button><button onClick={() => setModalInversion(false)} className="w-full mt-2 text-gray-500 text-sm">Cancelar</button></div></div></div>)}
+      {modalInversion && (<div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50"><div className="bg-white p-6 rounded-xl shadow-2xl w-96"><h3 className="text-lg font-bold mb-4">{formInversion.id ? '✏️ Editar Movimiento' : '⚡ Nuevo Movimiento'}</h3><div className="space-y-3"><div><label className="text-xs font-bold text-gray-500">Tipo</label>
+      <select className="w-full p-2 border rounded" value={formInversion.tipo} onChange={e => setFormInversion({...formInversion, tipo: e.target.value})}>
+         <optgroup label="Ingresos a Caja"><option value="saldo_inicial">💰 Carga de Saldo Inicial (Caja)</option><option value="inversion_rescate">📥 Rescate Inversión (Entrada a Caja)</option></optgroup>
+         <optgroup label="Inversiones"><option value="saldo_inicial_inversion">🏦 Carga de Saldo Inicial (Inversión)</option><option value="inversion_ingreso">📈 Enviar a Inversión (Salida de Caja)</option><option value="interes_inversion">✨ Intereses Ganados (Suma a Inversión)</option></optgroup>
+         <optgroup label="Egresos y Gastos"><option value="pago_impuesto">💸 Pago Impuestos</option><option value="pago_servicio">💡 Pago Servicios</option><option value="gasto_vario">🛒 Gastos Varios</option><option value="vencimiento_tarjeta">💳 Vencimiento Tarjeta de Crédito</option></optgroup>
+         <optgroup label="Impuestos Especiales"><option value="retencion_sircreb">🏦 Retención SIRCREB (IIBB)</option><option value="retencion_ley_25413">🏦 Imp. Ley 25.413 (A cuenta Ganancias)</option><option value="pago_autonomos">💼 Pago Autónomos (Deducción Gan.)</option></optgroup>
+      </select></div><div><label className="text-xs text-gray-500">Fecha</label><input type="date" className="w-full p-2 border rounded" value={formInversion.fecha} onChange={e => setFormInversion({...formInversion, fecha: e.target.value})} /></div><div><label className="text-xs text-gray-500">Importe</label><input type="number" className="w-full p-2 border rounded font-bold" value={formInversion.importe} onChange={e => setFormInversion({...formInversion, importe: e.target.value})} /></div><div><label className="text-xs text-gray-500">Descripción</label><input className="w-full p-2 border rounded" value={formInversion.descripcion} onChange={e => setFormInversion({...formInversion, descripcion: e.target.value})} /></div><button onClick={guardarMovimientoManual} className="w-full bg-purple-600 text-white py-2 rounded font-bold">{formInversion.id ? 'Guardar Cambios' : 'Registrar'}</button><button onClick={() => setModalInversion(false)} className="w-full mt-2 text-gray-500 text-sm">Cancelar (ESC)</button></div></div></div>)}
       
       {/* MODAL COBROS Y PAGOS */}
       {modalCobro && (<div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4"><div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto"><div className="p-6 border-b flex justify-between items-start"><div><h3 className="text-xl font-bold text-gray-800">Gestión Financiera: {modalCobro.entidad}</h3><p className="text-sm text-gray-500">FC: {modalCobro.punto_venta}-{modalCobro.numero_comprobante} | Total: ${formatCurrency(modalCobro.total)}</p></div><div className="text-right"><p className="text-xs text-gray-500 uppercase">Saldo Pendiente</p><p className={`text-2xl font-bold ${modalCobro.saldo > 0 ? 'text-red-600' : 'text-green-600'}`}>${formatCurrency(modalCobro.saldo)}</p></div></div><div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-8"><div className="bg-gray-50 p-4 rounded-xl border border-gray-200 h-fit"><h4 className="font-bold text-gray-700 mb-3 text-sm flex justify-between"><span>{movimientoEdicion ? '✎ Editando' : '＋ Nuevo Movimiento'}</span>{movimientoEdicion && <button onClick={() => { setMovimientoEdicion(null); setFormCobro({ fechaEmision: new Date().toISOString().split('T')[0], fechaEfectiva: new Date().toISOString().split('T')[0], importe: 0, retGanancias: 0, retIva: 0, retIibb: 0, nota: '' }); }} className="text-xs text-red-500 underline">Cancelar</button>}</h4><div className="space-y-3"><div className="grid grid-cols-2 gap-2"><div><label className="text-xs text-gray-500 font-bold">Emisión</label><input type="date" className="w-full p-2 border rounded text-sm bg-white" value={formCobro.fechaEmision} onChange={e => setFormCobro({...formCobro, fechaEmision: e.target.value})} /></div><div><label className="text-xs text-blue-600 font-bold">Efectiva</label><input type="date" className="w-full p-2 border rounded text-sm bg-white border-blue-200" value={formCobro.fechaEfectiva} onChange={e => setFormCobro({...formCobro, fechaEfectiva: e.target.value})} /></div></div>
                   
-                  {/* AQUÍ VA EL NUEVO BOTÓN PARA SALDAR EL TOTAL Y EL CAMPO DE IMPORTE */}
                   <div>
                     <div className="flex justify-between items-center mb-1">
                       <label className="text-xs text-gray-500 font-bold">Importe (Neto Cobrado/Pagado)</label>
@@ -955,7 +1108,6 @@ const InvoiceManager = ({ session }) => {
                     <input type="number" className="w-full p-2 border rounded font-bold text-blue-700 text-lg" placeholder="$ 0.00" value={formCobro.importe} onChange={e => setFormCobro({...formCobro, importe: e.target.value})} />
                   </div>
                   
-                  {/* PANEL DE RETENCIONES: AHORA VISIBLE PARA VENTAS Y COMPRAS */}
                   <div className="bg-white p-3 rounded border border-gray-200 space-y-2">
                     <p className="text-xs font-bold text-gray-400 uppercase border-b pb-1 mb-2">Retenciones {modalCobro.tipo === 'Venta' ? '(Sufridas)' : '(Practicadas)'}</p>
                     <div className="grid grid-cols-3 gap-2">
@@ -974,7 +1126,7 @@ const InvoiceManager = ({ session }) => {
                     </div>
                   </div>
 
-                  <input type="text" className="w-full p-2 border rounded text-sm" placeholder="Nota..." value={formCobro.nota} onChange={e => setFormCobro({...formCobro, nota: e.target.value})} /><button onClick={guardarMovimientoCompleto} className="w-full bg-blue-600 text-white py-2 rounded font-bold hover:bg-blue-700 transition">{movimientoEdicion ? 'Guardar Cambios' : 'Registrar'}</button></div></div><div className="space-y-3"><h4 className="font-bold text-gray-700 text-sm">Historial de Pagos</h4><div className="space-y-2 max-h-[400px] overflow-y-auto pr-2">{modalCobro.movimientos_caja && modalCobro.movimientos_caja.map((mov) => (<div key={mov.id} className="p-3 rounded-lg border text-sm flex justify-between items-center bg-white border-gray-100 shadow-sm"><div><p className="font-bold text-gray-800">${formatCurrency(mov.importe)}</p><p className="text-xs text-gray-500">{new Date(mov.fecha_pago).toLocaleDateString()} {mov.fecha_pago !== mov.fecha_efectiva && <span className="text-blue-500">➜ Efec: {new Date(mov.fecha_efectiva).toLocaleDateString()}</span>}</p>{(mov.ret_ganancias > 0 || mov.ret_iva > 0 || mov.ret_iibb > 0) && <p className="text-[10px] text-orange-600 mt-1">Retenciones: {mov.ret_ganancias > 0 && `G: ${mov.ret_ganancias} `} {mov.ret_iva > 0 && `I: ${mov.ret_iva} `} {mov.ret_iibb > 0 && `IIBB: ${mov.ret_iibb}`}</p>}</div><div className="flex gap-2"><button onClick={() => prepararEdicion(mov)} className="text-blue-600">✎</button><button onClick={() => borrarMovimiento(mov.id)} className="text-red-400">🗑</button></div></div>))}</div></div></div><div className="p-4 border-t bg-gray-50 flex justify-end"><button onClick={() => setModalCobro(null)} className="px-6 py-2 bg-white border border-gray-300 rounded font-bold text-gray-600 hover:bg-gray-100">Cerrar</button></div></div></div>)}
+                  <input type="text" className="w-full p-2 border rounded text-sm" placeholder="Nota..." value={formCobro.nota} onChange={e => setFormCobro({...formCobro, nota: e.target.value})} /><button onClick={guardarMovimientoCompleto} className="w-full bg-blue-600 text-white py-2 rounded font-bold hover:bg-blue-700 transition">{movimientoEdicion ? 'Guardar Cambios' : 'Registrar'}</button></div></div><div className="space-y-3"><h4 className="font-bold text-gray-700 text-sm">Historial de Pagos</h4><div className="space-y-2 max-h-[400px] overflow-y-auto pr-2">{modalCobro.movimientos_caja && modalCobro.movimientos_caja.map((mov) => (<div key={mov.id} className="p-3 rounded-lg border text-sm flex justify-between items-center bg-white border-gray-100 shadow-sm"><div><p className="font-bold text-gray-800">${formatCurrency(mov.importe)}</p><p className="text-xs text-gray-500">{new Date(mov.fecha_pago).toLocaleDateString()} {mov.fecha_pago !== mov.fecha_efectiva && <span className="text-blue-500">➜ Efec: {new Date(mov.fecha_efectiva).toLocaleDateString()}</span>}</p>{(mov.ret_ganancias > 0 || mov.ret_iva > 0 || mov.ret_iibb > 0) && <p className="text-[10px] text-orange-600 mt-1">Retenciones: {mov.ret_ganancias > 0 && `G: ${mov.ret_ganancias} `} {mov.ret_iva > 0 && `I: ${mov.ret_iva} `} {mov.ret_iibb > 0 && `IIBB: ${mov.ret_iibb}`}</p>}</div><div className="flex gap-2"><button onClick={() => prepararEdicion(mov)} className="text-blue-600">✎</button><button onClick={() => borrarMovimiento(mov.id)} className="text-red-400">🗑</button></div></div>))}</div></div></div><div className="p-4 border-t bg-gray-50 flex justify-end"><button onClick={() => setModalCobro(null)} className="px-6 py-2 bg-white border border-gray-300 rounded font-bold text-gray-600 hover:bg-gray-100">Cerrar (ESC)</button></div></div></div>)}
     </div>
   );
 };
